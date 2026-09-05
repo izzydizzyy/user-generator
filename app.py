@@ -1,8 +1,8 @@
 import random
 import re
-import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # user-generator
 # tiny tiktok username checker
@@ -16,6 +16,7 @@ LETTERS = "abcdefghijklmnopqrstuvwxyz"
 RARE = "qzxvkjyw"
 VOWELS = "aeiou"
 DIGITS = "0123456789"
+WORKERS = 20
 
 HEADERS = {
     "User-Agent": (
@@ -32,30 +33,25 @@ def rare_username():
     style = random.randint(1, 5)
 
     if style == 1:
-        # short + pronounceable: vex, qin, zov
         name = random.choice(RARE) + random.choice(VOWELS) + random.choice(LETTERS)
         if length == 4:
             name += random.choice(LETTERS)
 
     elif style == 2:
-        # sharper looking: qvx, zyk, xvra
         name = "".join(
             random.choice(RARE if i % 2 == 0 else LETTERS)
             for i in range(length)
         )
 
     elif style == 3:
-        # clean random letters
         name = "".join(random.choice(LETTERS) for _ in range(length))
 
     elif style == 4:
-        # one number, still 3-4 chars
         chars = [random.choice(LETTERS) for _ in range(length)]
         chars[random.randrange(length)] = random.choice(DIGITS)
         name = "".join(chars)
 
     else:
-        # rare first/last character
         if length == 3:
             name = random.choice(RARE) + random.choice(LETTERS) + random.choice(RARE)
         else:
@@ -69,15 +65,23 @@ def rare_username():
     return name.lower()
 
 
+def generate_usernames(amount):
+    names = set()
+
+    while len(names) < amount:
+        names.add(rare_username())
+
+    return list(names)
+
+
 def is_available(username):
     url = f"https://www.tiktok.com/@{username}"
     req = urllib.request.Request(url, headers=HEADERS)
 
     try:
-        with urllib.request.urlopen(req, timeout=7) as response:
+        with urllib.request.urlopen(req, timeout=4) as response:
             html = response.read().decode("utf-8", errors="ignore")
 
-        # TikTok normally embeds the profile's uniqueId in the page when it exists.
         patterns = (
             rf'"uniqueId":"{re.escape(username)}"',
             rf'\\"uniqueId\\":\\"{re.escape(username)}\\"',
@@ -93,34 +97,54 @@ def is_available(username):
         return None
 
 
+def ask_amount():
+    while True:
+        try:
+            amount = int(input("[?] how many do u want generated... "))
+
+            if 1 <= amount <= 5000:
+                return amount
+
+            print(f"{GRAY}[!] max is 5000{RESET}")
+
+        except ValueError:
+            print(f"{GRAY}[!] enter a number{RESET}")
+
+
 def main():
     print("user-generator")
     print(f"{GRAY}tiktok / 3-4 char usernames{RESET}\n")
 
-    seen = set()
+    amount = ask_amount()
+    usernames = generate_usernames(amount)
     available = 0
 
+    print()
+
     try:
-        while True:
-            username = rare_username()
-            if username in seen:
-                continue
+        with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+            jobs = {
+                pool.submit(is_available, username): username
+                for username in usernames
+            }
 
-            seen.add(username)
-            result = is_available(username)
+            for job in as_completed(jobs):
+                username = jobs[job]
+                result = job.result()
 
-            if result is True:
-                available += 1
-                print(f"{GREEN}[available]{RESET} {username}")
-            elif result is False:
-                print(f"{RED}[taken]{RESET}     {username}")
-            else:
-                print(f"{GRAY}[retry]{RESET}     {username}")
-
-            time.sleep(random.uniform(0.65, 1.15))
+                if result is True:
+                    available += 1
+                    print(f"{GREEN}[available]{RESET} {username}")
+                elif result is False:
+                    print(f"{RED}[taken]{RESET}     {username}")
+                else:
+                    print(f"{GRAY}[retry]{RESET}     {username}")
 
     except KeyboardInterrupt:
         print(f"\n{GRAY}stopped / found {available} available{RESET}")
+        return
+
+    print(f"\n{GRAY}done / checked {amount} / found {available} available{RESET}")
 
 
 if __name__ == "__main__":
